@@ -1,8 +1,10 @@
 from __future__ import annotations
 from binascii import hexlify
-
+import struct
 
 class DefaultEncoder(object):
+    def __init__(self, tmpl=None):
+        self.tmpl = tmpl
 
     def default(self, obj):
         try:
@@ -35,6 +37,21 @@ class IntEncoder(DefaultEncoder):
 
     def parse(self, obj, _cls):
         return int.from_bytes(obj, byteorder='big')
+
+class StructEncoder(DefaultEncoder):
+
+    def default(self, obj): # TODO implement
+        if isinstance(obj, int):
+            return obj.to_bytes(4, byteorder='big')
+        return super().default(obj)
+
+    def to_string(self, obj, offset=0, use_names=False):
+        return str(hexlify(obj), 'ascii')
+
+    def parse(self, obj, _cls):
+        tmpl = self.tmpl
+        tlen = struct.calcsize(tmpl)
+        return struct.unpack(tmpl, obj)[0]
 
 
 class AsciiEncoder(DefaultEncoder):

@@ -25,10 +25,10 @@ class TLV:
             class name is the name of the class that represents the type 
                 of the value.
     '''
-    Config = enum.Enum('Config', 'Type Name')
+    Config = enum.Enum('Config', 'Type Name Tmpl')
     _global_tag_map = {}
 
-    def __init__(self, indent=4, tag_size=1, len_size=None, endian='big'):
+    def __init__(self, indent=4, tag_size=1, len_size=None, endian='big', tv=False):
         '''
         :args:
             indent: How many spaces to use in tree() method
@@ -42,6 +42,7 @@ class TLV:
         self.tag_size = tag_size
         self.len_size = len_size
         self.endian = endian
+        self.tv = tv
         self._items = {}
         self._local_tag_map = None
 
@@ -92,7 +93,7 @@ class TLV:
 
     def _new_equivalent_tlv(self) -> TLV:
         '''Creates a new TLV object with the same decode settings as self. Useful for parsing nested structures.'''
-        return TLV(self.indent, self.tag_size, self.len_size, self.endian)
+        return TLV(self.indent, self.tag_size, self.len_size, self.endian, self.tv)
 
     @classmethod
     def set_tag_map(cls, map: Dict) -> None:
@@ -226,18 +227,30 @@ class TLV:
         while len(aux) > min_size:
             # Tag value
             t = int.from_bytes(aux[:self.tag_size], byteorder=self.endian)
-            # Len value
+            # Strip tag value, length (if any) and value remain
             aux = aux[self.tag_size:]
-            len_size = self.len_size or self.decode_len_size(aux)
-            offset = 0 if len_size == 1 else 1
-            l = int.from_bytes(aux[offset:len_size], byteorder=self.endian)
+            tg_cfg = self.tag_map.get(t)
+            len_size = 0
+            l = 0
+            tmpl = None
+            if self.tv:
+                if tg_cfg is not None:
+                    tmpl = tg_cfg.get(TLV.Config.Tmpl)
+                    if tmpl is not None:
+                        l = struct.calcsize(tmpl)
+                    else:
+                        raise AttributeError(f'Missing template to decode attribute {hexlify(t)}')
+                else:
+                    raise AttributeError(f'Unknown attribute {t} in TV decoding')
+            else:
+                # Len value
+                len_size = self.len_size or self.decode_len_size(aux)
+                offset = 0 if len_size == 1 else 1
+                l = int.from_bytes(aux[offset:len_size], byteorder=self.endian)
             # Value
             aux = aux[len_size:]
             v = aux[:l]
-            # Next value
-            aux = aux[l:]
             # Check if tag has any parser
-            tg_cfg = self.tag_map.get(t)
             if tg_cfg is not None:
                 tg_type = tg_cfg.get(TLV.Config.Type)
                 if tg_type is not None:
@@ -248,9 +261,11 @@ class TLV:
                     else:
                         frm = ALLOWED_TYPES.get(tg_type)
                         if frm is not None:
-                            v = frm().parse(v, self._new_equivalent_tlv())
+                            v = frm(tmpl = tg_cfg.get(TLV.Config.Tmpl)).parse(v, self._new_equivalent_tlv())
             # Set value
             self.__setitem__(t, v)
+            # Next value
+            aux = aux[l:]
         # Done parsing
         return True
 
@@ -297,6 +312,7 @@ class TLVIterator:
 ALLOWED_TYPES = {
     TLV: DefaultEncoder,
     int: IntEncoder,
+    struct: StructEncoder,
     bytes: BytesEncoder,
     str: Utf8Encoder,
 }
